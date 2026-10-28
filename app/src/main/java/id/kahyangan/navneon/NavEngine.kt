@@ -63,7 +63,23 @@ object NavEngine {
     /** Kunci posisi (uji tanpa GPS); simulasi tetap boleh menggerakkan posisi. */
     fun lockAt(lat: Double, lon: Double) {
         AppState.locLocked = true
-        onLoc(Location("uji").apply { latitude = lat; longitude = lon })
+        onLoc(Location("sim").apply { latitude = lat; longitude = lon; accuracy = 5f })
+    }
+
+    /** Dipanggil hanya dari tombol. Mencari SPBU terdekat lalu menjadikannya tujuan. */
+    fun findNearestPump() {
+        val loc = AppState.location
+        if (loc == null) { AppState.say("Posisi GPS belum didapat"); return }
+        AppState.say("Mencari SPBU terdekat...", 20000)
+        io.execute {
+            val p = try { PumpRepo.nearest(loc.latitude, loc.longitude) } catch (e: Exception) { null }
+            if (p == null) {
+                AppState.say("SPBU tidak ditemukan atau gagal dimuat")
+            } else {
+                setDestination(AppState.Place(p.name, "SPBU terdekat", p.lat, p.lon, "pump"))
+                AppState.say("SPBU terdekat: " + p.name, 3000)
+            }
+        }
     }
 
     /** Menetapkan tujuan hasil pencarian dan menghitung rutenya. */

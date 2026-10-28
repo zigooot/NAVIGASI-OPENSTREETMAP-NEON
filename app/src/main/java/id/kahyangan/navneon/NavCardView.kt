@@ -44,6 +44,9 @@ class NavCardView @JvmOverloads constructor(private val ctx: Context, attrs: Att
     private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
     private val prefs = ctx.getSharedPreferences("navneon", Context.MODE_PRIVATE)
 
+    /** Dipanggil saat tombol Cari tujuan ditekan; tampilkan kolom pencarian di sini. */
+    var onSearch: (() -> Unit)? = null
+
     init {
         setBackgroundColor(Color.BLACK)
         AppState.onChange = { postInvalidateOnAnimation() }
@@ -106,7 +109,22 @@ class NavCardView @JvmOverloads constructor(private val ctx: Context, attrs: Att
     /** Tombol zoom, posisi saya, kompas, dan bar tujuan. */
     private fun controls(c: Canvas, ml: Float, mt: Float, mw: Float, mh: Float) {
         val right = ml + mw - 12f
-        val st = mt + 12f
+        val st0 = mt + 12f
+        // cari tujuan dan SPBU terdekat
+        val sw2 = 250f; val sh2 = 64f
+        val sl = right - sw2
+        frostBtn(c, sl, st0, sl + sw2, st0 + sh2, true, 18f, true)
+        icon(c, R.drawable.ic_search, sl + 18f, st0 + 16f, 32f, Color.WHITE)
+        text(c, "Cari tujuan", sl + 62f, st0 + 42f, 26f, Color.WHITE, 600)
+        hit("search", sl, st0, sl + sw2, st0 + sh2)
+        val pw = 270f; val pl = sl - 12f - pw
+        val pumpOn = AppState.dest?.kind == "pump"
+        frostBtn(c, pl, st0, pl + pw, st0 + sh2, pumpOn, 18f)
+        icon(c, R.drawable.ic_pump, pl + 18f, st0 + 16f, 32f, if (pumpOn) MG else CY)
+        text(c, if (pumpOn) "Batal SPBU" else "SPBU terdekat", pl + 62f, st0 + 42f, 26f, if (pumpOn) MG else CY, 600, Paint.Align.LEFT, pw - 76f)
+        hit("pump-find", pl, st0, pl + pw, st0 + sh2)
+        // zoom, posisi saya, kompas
+        val st = st0 + 88f
         val s = 64f
         roundBtn(c, "zin", R.drawable.ic_plus, right - s, st, s, TXT)
         roundBtn(c, "zout", R.drawable.ic_minus, right - s, st + 74f, s, TXT)
@@ -155,6 +173,8 @@ class NavCardView @JvmOverloads constructor(private val ctx: Context, attrs: Att
             "zin" -> AppState.mapZoom = min(4, AppState.mapZoom + 1)
             "zout" -> AppState.mapZoom = max(-4, AppState.mapZoom - 1)
             "zctr" -> AppState.mapZoom = 0
+            "search" -> onSearch?.invoke()
+            "pump-find" -> if (AppState.dest?.kind == "pump") NavEngine.clearDestination() else NavEngine.findNearestPump()
             "map-compass" -> prefs.edit().putBoolean("compass", !compassOn()).apply()
             "dest-go" -> NavEngine.startGuidance()
             "guide-stop" -> NavEngine.stopGuidance()
@@ -394,9 +414,51 @@ class NavCardView @JvmOverloads constructor(private val ctx: Context, attrs: Att
 
     private fun compassOn() = prefs.getBoolean("compass", true)
 
+    // ---------- kompas yang dikalibrasi menurut laju mobil ----------
+    private var headTarget = 0f
+    private var headSrc = "tahan"
+    private var headRouteRef: List<DoubleArray>? = null
+    private var headRouteIdx = 0
+
+    private fun bearingTo(la1: Double, lo1: Double, la2: Double, lo2: Double): Float {
+        val p1 = Math.toRadians(la1); val p2 = Math.toRadians(la2); val dl = Math.toRadians(lo2 - lo1)
+        val y = sin(dl) * cos(p2); val x = cos(p1) * sin(p2) - sin(p1) * cos(p2) * cos(dl)
+        return ((Math.toDegrees(atan2(y, x)) + 360.0) % 360.0).toFloat()
+    }
+
+    /**
+     * Arah mobil untuk kompas. GPS hanya memberi arah yang dapat dipercaya saat mobil cukup cepat, sehingga:
+     * - diam (di bawah 3 km/j): arah ditahan, tidak berubah mengikuti derau GPS;
+     * - saat dipandu dan dekat jalur: memakai arah ruas rute di depan mobil (stabil, tanpa goyangan GPS);
+     * - selain itu memakai arah GPS bila laju sedikitnya 5 km/j.
+     */
+    private fun updateHeadingTarget(loc: android.location.Location) {
+        val v = AppState.speedKmh
+        if (v < 3f) { headSrc = "tahan"; return }
+        val route = AppState.destRoute
+        if (AppState.guiding && route != null && route.size > 3) {
+            if (route !== headRouteRef) { headRouteRef = route; headRouteIdx = 0 }
+            val lo = max(0, headRouteIdx - 5); val hi = min(route.size - 2, headRouteIdx + 90)
+            var best = Double.MAX_VALUE; var bi = -1
+            for (i in lo..hi) {
+                val d = Geo.distM(loc.latitude, loc.longitude, route[i][0], route[i][1])
+                if (d < best) { best = d; bi = i }
+            }
+            if (bi >= 0 && best < 40.0) {
+                headRouteIdx = bi
+                // arah ruas sekitar 25 m di depan, supaya tikungan terasa lebih awal
+                var j = bi; var acc = 0.0
+                while (j < route.size - 1 && acc < 25.0) { acc += Geo.distM(route[j][0], route[j][1], route[j + 1][0], route[j + 1][1]); j++ }
+                if (j > bi) { headTarget = bearingTo(route[bi][0], route[bi][1], route[j][0], route[j][1]); headSrc = "rute"; return }
+            }
+        }
+        if (loc.hasBearing() && v >= 5f) { headTarget = loc.bearing; headSrc = "gps"; return }
+        headSrc = "tahan"
+    }
+
     private fun interpPos(loc: android.location.Location, now: Long) {
-        if (loc !== fixRef) { fixRef = loc; fixAt = now }
-        if (loc.hasBearing() && AppState.speedKmh > 3f) carBearing = loc.bearing
+        if (loc !== fixRef) { fixRef = loc; fixAt = now; updateHeadingTarget(loc) }
+        carBearing = headTarget
         val v = if (AppState.speedKmh > 2f) AppState.speedKmh / 3.6 else 0.0
         val age = min(1.2, (now - fixAt) / 1000.0)
         val brg = Math.toRadians(carBearing.toDouble())
@@ -406,8 +468,13 @@ class NavCardView @JvmOverloads constructor(private val ctx: Context, attrs: Att
         dispAt = now
         if (!dispInit || Geo.distM(dispLat, dispLon, tLat, tLon) > 150) { dispLat = tLat; dispLon = tLon; dispInit = true }
         else { val k = min(1.0, dt * 10.0); dispLat += (tLat - dispLat) * k; dispLon += (tLon - dispLon) * k }
-        val d = ((carBearing - headDisp + 540f) % 360f) - 180f
-        headDisp = (headDisp + d * min(1f, dt.toFloat() * 4f) + 360f) % 360f
+        // kecepatan putar kompas mengikuti laju: pelan saat lambat (hindari goyang), cepat saat kencang (ikuti tikungan)
+        val kmh = max(0f, AppState.speedKmh)
+        val d = angDiff(headTarget, headDisp)
+        if (headSrc != "tahan" && !(abs(d) < 1.5f && kmh < 20f)) {
+            val rate = 1.5f + 6.5f * min(1f, kmh / 60f)
+            headDisp = (headDisp + d * (1f - exp(-rate * dt.toFloat())) + 360f) % 360f
+        }
         if (v > 0.0 || abs(d) > 0.4f || Geo.distM(dispLat, dispLon, tLat, tLon) > 0.3) fast = true
     }
 

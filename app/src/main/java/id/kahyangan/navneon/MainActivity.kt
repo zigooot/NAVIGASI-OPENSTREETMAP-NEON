@@ -34,7 +34,7 @@ class MainActivity : Activity() {
 
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(24, 0, 24, 18)
+            setPadding(24, 8, 24, 8)
             fun btn(label: String, onClick: () -> Unit) = Button(this@MainActivity).apply {
                 text = label; setTextColor(Color.WHITE); setBackgroundColor(Color.argb(150, 20, 20, 40)); isAllCaps = false
                 setOnClickListener { onClick() }
@@ -44,11 +44,13 @@ class MainActivity : Activity() {
             btn("Hentikan") { NavEngine.stopGuidance(); NavEngine.clearDestination() }
             btn("Ganti tema") { red = !red; card.setTheme(if (red) "red" else "purple") }
         }
-        val root = FrameLayout(this)
-        root.addView(card, FrameLayout.LayoutParams(-1, -1))
-        root.addView(bar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        // kartu di atas, deretan tombol demo di bawahnya agar tidak menutupi bar tujuan
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.BLACK) }
+        root.addView(card, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(bar, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
 
+        card.onSearch = { showSearch() }
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) NavEngine.startGps(this)
         else requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 1)
 
@@ -61,6 +63,31 @@ class MainActivity : Activity() {
             if (it.getBooleanExtra("guide", false)) NavEngine.startGuidance()
             if (it.getBooleanExtra("sim", false)) NavEngine.startSim(it.getIntExtra("offroute", -1))
         }
+    }
+
+    /** Cari tujuan lewat Nominatim (OpenStreetMap), lalu tetapkan dan mulai pemanduan. */
+    private fun showSearch() {
+        val et = android.widget.EditText(this).apply { hint = "Nama tempat atau alamat" }
+        android.app.AlertDialog.Builder(this).setTitle("Cari tujuan").setView(et)
+            .setPositiveButton("Cari") { _, _ -> runSearch(et.text.toString()) }
+            .setNegativeButton("Batal", null).show()
+    }
+
+    private fun runSearch(q: String) {
+        if (q.isBlank()) return
+        val loc = AppState.location
+        Thread {
+            val res = try { PlaceSearch.search(q, loc?.latitude, loc?.longitude) } catch (e: Exception) { null }
+            runOnUiThread {
+                if (res == null) { AppState.say("Pencarian gagal. Periksa internet."); return@runOnUiThread }
+                if (res.isEmpty()) { AppState.say("Tidak ada hasil"); return@runOnUiThread }
+                val names = res.map { it.name + (if (it.address.isNotEmpty()) "\n" + it.address else "") }.toTypedArray()
+                android.app.AlertDialog.Builder(this).setTitle("Hasil").setItems(names) { _, i ->
+                    NavEngine.setDestination(res[i])
+                    NavEngine.startGuidance()
+                }.show()
+            }
+        }.start()
     }
 
     private fun startDemo(offAt: Int) {

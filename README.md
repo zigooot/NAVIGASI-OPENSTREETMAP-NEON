@@ -14,7 +14,12 @@ Tidak memakai Google Maps, Google Navigation SDK, maupun peta satelit.
   - Kartu belokan: ikon panah, jarak ke belokan, instruksi berbahasa Indonesia, lencana kecepatan.
   - Bar tujuan: nama, jarak, waktu, tombol mulai dan hentikan pemanduan.
   - Hitung ulang rute otomatis jika posisi lebih dari 70 m dari rute dua kali berturut-turut.
-- **Kompas.** Peta berputar sehingga arah lurus mobil selalu ke atas; penunjuk U menandai arah utara. Tombol Kompas/Utara untuk beralih.
+- **Kompas yang dikalibrasi menurut laju mobil.** Peta berputar sehingga arah lurus mobil selalu ke atas; penunjuk U menandai arah utara. Tombol Kompas/Utara untuk beralih.
+  - Di bawah 3 km/jam arah ditahan (tidak ikut derau GPS saat mobil diam atau merayap).
+  - Saat dipandu dan posisi dekat jalur (kurang dari 40 m), arah diambil dari ruas rute sekitar 25 m di depan mobil: stabil dan tikungan terasa lebih awal.
+  - Di luar itu dipakai arah GPS bila laju sedikitnya 5 km/jam.
+  - Kecepatan putar mengikuti laju: pelan saat lambat (1,5 per detik, mencegah goyang) hingga cepat saat kencang (8 per detik pada 60 km/jam ke atas, mengikuti tikungan). Selisih kurang dari 1,5 derajat diabaikan di bawah 20 km/jam.
+- **Cari tujuan dan SPBU terdekat.** Pencarian lewat Nominatim (OpenStreetMap), SPBU terdekat lewat Overpass; hasilnya langsung menjadi tujuan dan dipandu.
 - **Halus.** Mosaik ubin disusun di latar belakang dan ditampilkan lewat jaring (mesh) GPU. Posisi mobil diinterpolasi antar fiks GPS, jadi gerak tetap mulus walau GPS hanya 1 Hz (sekitar 60 fps di uji).
 - **Ikon mobil.** Mobil neon putih, berputar mengikuti arah.
 - **Simulasi berkendara** untuk uji tanpa GPS, termasuk simulasi keluar jalur.
@@ -24,7 +29,9 @@ Tidak memakai Google Maps, Google Navigation SDK, maupun peta satelit.
 ```
 app/src/main/java/id/kahyangan/navneon/
   NavCardView.kt    tampilan kartu (Canvas): peta, kompas, kartu belokan, bar tujuan, kontrol
-  NavEngine.kt      GPS, rute OSRM, pemanduan, hitung ulang, simulasi
+  NavEngine.kt      GPS, rute OSRM, pemanduan, hitung ulang, SPBU terdekat, simulasi
+  PlaceSearch.kt    pencarian tempat (Nominatim)
+  PumpRepo.kt       SPBU terdekat (Overpass)
   AppState.kt       data bersama (posisi, tujuan, rute, pemanduan)
   TileCache.kt      ubin OSM online + ubin offline
   OfflineMaps.kt    unduh dan gambar peta offline mapsforge (katalog peta-hu)
@@ -47,6 +54,8 @@ NavEngine.setDestination(AppState.Place("Lapangan Pangsar", "Ambarawa", -7.26669
 NavEngine.startGuidance()            // pemanduan belokan; NavEngine.stopGuidance() untuk berhenti
 card.setTheme("red")                 // "purple" (bawaan) atau "red"
 card.toggleCompass()                 // peta berputar / utara di atas
+card.onSearch = { /* tampilkan kolom cari, lalu NavEngine.setDestination(...) */ }
+NavEngine.findNearestPump()          // SPBU terdekat menjadi tujuan
 ```
 
 `NavCardView` menggambar pada ruang desain setinggi 825,6 satuan dan menyesuaikan skala dengan tinggi View, sehingga cocok dipasang di layar mobil mana pun.

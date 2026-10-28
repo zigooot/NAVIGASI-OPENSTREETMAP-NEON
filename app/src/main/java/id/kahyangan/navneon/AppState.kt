@@ -9,6 +9,8 @@ import android.os.Looper
 object AppState {
     data class Place(val name: String, val address: String, val lat: Double, val lon: Double, val kind: String = "")
 
+    data class Pump(val lat: Double, val lon: Double, val name: String, val distM: Double)
+
     /** Kartu belokan: jarak ke belokan, instruksi, serta ringkasan sisa rute. */
     data class NavLive(val dist: String, val instruction: String, val durasi: String, val sisa: String, val tiba: String, val icon: Bitmap?, val whenMs: Long)
 
